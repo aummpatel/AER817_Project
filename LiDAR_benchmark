@@ -1,0 +1,57 @@
+#include <Wire.h>                 // Arduino's built-in I2C library (uses A4 = SDA, A5 = SCL on the Uno)
+
+const byte LIDAR = 0x10;          // TF-Luna's default I2C address [1]
+
+void setup() {
+  Serial.begin(115200);           // Start the serial link to the PC at 115200 baud (match this in Serial Monitor)
+  Wire.begin();                   // Start the I2C bus with the Uno as the controller
+  Wire.setClock(100000);          // Run I2C at 100 kHz, the rate used in the report
+
+  Wire.beginTransmission(LIDAR);  // Try to talk to the TF-Luna
+  byte err = Wire.endTransmission(); // Finish; returns 0 if the LiDAR acknowledged (ACK)
+  if (err == 0) {                 // If the LiDAR answered...
+    Serial.println("TF-Luna found at 0x10");    // ...report success
+  } else {                        // Otherwise...
+    Serial.println("TF-Luna NOT found - check wiring and pin 5"); // ...report the fault
+    while (true);                 // Stop here forever; nothing else will work without the sensor
+  }
+}
+
+void loop() {
+  Wire.beginTransmission(LIDAR);  // Start a message to the TF-Luna
+  Wire.write(0x00);               // Tell it we want to read starting at register 0x00 (distance low byte)
+  Wire.endTransmission(false);    // End the write but keep the bus (repeated start), so the read follows straight away
+
+  Wire.requestFrom(LIDAR, (byte)6); // Ask for 6 bytes: registers 0x00-0x05
+  if (Wire.available() < 6) {     // If fewer than 6 bytes came back...
+    Serial.println("Read error"); // ...something went wrong on the bus
+    delay(100);                   // Wait a bit
+    return;                       // Skip the rest of this loop and try again
+  }
+
+  byte distL = Wire.read();       // 0x00: distance, low byte
+  byte distH = Wire.read();       // 0x01: distance, high byte
+  byte ampL  = Wire.read();       // 0x02: signal strength (amplitude), low byte
+  byte ampH  = Wire.read();       // 0x03: signal strength, high byte
+  byte tempL = Wire.read();       // 0x04: chip temperature, low byte
+  byte tempH = Wire.read();       // 0x05: chip temperature, high byte
+
+  uint16_t dist = distL | (distH << 8);   // Join the two bytes into one 16-bit number: distance in cm
+  uint16_t amp  = ampL  | (ampH  << 8);   // Join the two bytes: signal strength (no unit)
+  int16_t  tRaw = tempL | (tempH << 8);   // Join the two bytes: temperature in 0.01 °C steps
+  float    temp = tRaw / 100.0;           // Convert to °C
+
+  bool valid = (amp >= 100) && (amp != 65535)   // Strength must be 100 or more, and not 65535 (overexposed) [1]
+            && (dist >= 20) && (dist <= 800);   // Distance must be outside the 20 cm blind zone and within 8 m
+
+  Serial.print("Distance: ");     // Label
+  Serial.print(dist);             // Distance value
+  Serial.print(" cm   Strength: "); // Label
+  Serial.print(amp);              // Signal strength value
+  Serial.print("   Temp: ");      // Label
+  Serial.print(temp, 1);          // Temperature, 1 decimal place
+  Serial.print(" C   Valid: ");   // Label
+  Serial.println(valid ? "YES" : "NO"); // Print YES or NO, then start a new line
+
+  delay(100);                     // Wait 100 ms, so about 10 readings per second
+}
